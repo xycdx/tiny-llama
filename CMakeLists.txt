@@ -45,11 +45,6 @@ add_library(tinyllama STATIC
 target_include_directories(tinyllama PUBLIC include)
 target_link_libraries(tinyllama PUBLIC CUDA::cublas CUDA::cudart)
 
-# CUDA separable compilation（跨 .cu 文件调用 device 函数时需要）
-set_target_properties(tinyllama PROPERTIES
-    CUDA_SEPARABLE_COMPILATION ON
-)
-
 # ── Tests ─────────────────────────────────────────────────────────────────────
 if(TINYLLAMA_BUILD_TESTS)
     enable_testing()
