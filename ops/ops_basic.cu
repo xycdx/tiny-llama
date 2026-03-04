@@ -63,8 +63,7 @@ __global__ void softmax_kernel(float* x, int64_t last_dim) {
     maxval = warp_reduce_max(maxval);
     if (tid % 32 == 0) smem[tid / 32] = maxval;
     __syncthreads();
-    if (tid < (blockDim.x + 31) / 32)
-        maxval = smem[tid];
+    maxval = (tid < (blockDim.x + 31) / 32) ? smem[tid] : -1e38f;
     maxval = warp_reduce_max(maxval);
 
     // Step 2: exp & parallel sum
@@ -77,8 +76,7 @@ __global__ void softmax_kernel(float* x, int64_t last_dim) {
     sumval = warp_reduce_sum(sumval);
     if (tid % 32 == 0) smem[tid / 32] = sumval;
     __syncthreads();
-    if (tid < (blockDim.x + 31) / 32)
-        sumval = smem[tid];
+    sumval = (tid < (blockDim.x + 31) / 32) ? smem[tid] : 0.0f;
     sumval = warp_reduce_sum(sumval);
 
     // Step 3: normalize
@@ -124,7 +122,7 @@ __global__ void rms_norm_kernel(const float* __restrict__ x,
     ss = warp_reduce_sum(ss);
     if (tid % 32 == 0) smem[tid / 32] = ss;
     __syncthreads();
-    if (tid < (blockDim.x + 31) / 32) ss = smem[tid];
+    ss = (tid < (blockDim.x + 31) / 32) ? smem[tid] : 0.0f;
     ss = warp_reduce_sum(ss);
 
     float scale = rsqrtf(ss / (float)hidden + eps);
@@ -169,7 +167,7 @@ __global__ void layer_norm_kernel(const float* __restrict__ x,
     sum = warp_reduce_sum(sum);
     if (tid % 32 == 0) smem[tid / 32] = sum;
     __syncthreads();
-    if (tid < warp_count) sum = smem[tid];
+    sum = (tid < warp_count) ? smem[tid] : 0.0f;
     sum = warp_reduce_sum(sum);
     float mean = sum / (float)hidden;
 
@@ -182,7 +180,7 @@ __global__ void layer_norm_kernel(const float* __restrict__ x,
     var = warp_reduce_sum(var);
     if (tid % 32 == 0) smem[tid / 32] = var;
     __syncthreads();
-    if (tid < warp_count) var = smem[tid];
+    var = (tid < warp_count) ? smem[tid] : 0.0f;
     var = warp_reduce_sum(var);
     var /= (float)hidden;
 
@@ -241,8 +239,8 @@ Tensor matmul(const Tensor& A_in, const Tensor& B_in,
 
     // cuBLAS col-major trick: C^T = B^T @ A^T
     // op(A_row) @ op(B_row) → in col-major: op_col(B) @ op_col(A)
-    cublasOperation_t opA = trans_A ? CUBLAS_OP_N : CUBLAS_OP_T;
-    cublasOperation_t opB = trans_B ? CUBLAS_OP_T : CUBLAS_OP_N;
+    cublasOperation_t opA = trans_B ? CUBLAS_OP_T : CUBLAS_OP_N;  // for B in cublas A-slot
+    cublasOperation_t opB = trans_A ? CUBLAS_OP_T : CUBLAS_OP_N;  // for A in cublas B-slot
     // cuBLAS sees: C(N×M) = opA(B,N×K) @ opB(A,K×M)
     int lda = (int)(trans_B ? K : N);   // leading dim of B in col-major
     int ldb = (int)(trans_A ? M : K);   // leading dim of A in col-major
@@ -282,8 +280,8 @@ Tensor bmm(const Tensor& A_in, const Tensor& B_in,
 
     Tensor C({batch, M, N}, DType::Float32, Device::CUDA);
 
-    cublasOperation_t opA = trans_A ? CUBLAS_OP_N : CUBLAS_OP_T;
-    cublasOperation_t opB = trans_B ? CUBLAS_OP_T : CUBLAS_OP_N;
+    cublasOperation_t opA = trans_B ? CUBLAS_OP_T : CUBLAS_OP_N;
+    cublasOperation_t opB = trans_A ? CUBLAS_OP_T : CUBLAS_OP_N;
     int lda = (int)(trans_B ? K : N);
     int ldb = (int)(trans_A ? M : K);
     int ldc = (int)N;

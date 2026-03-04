@@ -18,11 +18,11 @@ endif()
 
 # ── Compiler flags ────────────────────────────────────────────────────────────
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
-    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-O3;-march=native>)
-    add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-O3;--use_fast_math>)
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-O3> $<$<COMPILE_LANGUAGE:CXX>:-march=native>)
+    add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-O3> $<$<COMPILE_LANGUAGE:CUDA>:--use_fast_math>)
 else()
-    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-O0;-g>)
-    add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-O0;-g;-G>)
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-O0> $<$<COMPILE_LANGUAGE:CXX>:-g>)
+    add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-O0> $<$<COMPILE_LANGUAGE:CUDA>:-g> $<$<COMPILE_LANGUAGE:CUDA>:-G>)
 endif()
 
 # ── cuBLAS ────────────────────────────────────────────────────────────────────
