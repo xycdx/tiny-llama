@@ -163,6 +163,7 @@ int main() {
     int pass = 0, total = 0;
 #define RUN(t) do { ++total; if(t()) ++pass; } while(0)
     RUN(test_softmax);
+
     RUN(test_rms_norm);
     RUN(test_matmul);
     RUN(test_silu);
