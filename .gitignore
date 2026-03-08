@@ -1,0 +1,5 @@
+# Ignore generated build artifacts
+build/
+
+# Ignore model files directory
+models/

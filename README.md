@@ -17,10 +17,12 @@ A minimal LLM inference engine built from scratch in C++/CUDA. Most code are gen
 - [ ] Transformer block (Attention + FFN + residual)
 
 ### Phase 2 — Model Layer
+- [x] Qwen3Model class (model weight storage and access)
 - [ ] KV-cache
 
 ### Phase 3 — Weight Loading & Tokenizer
-- [ ] Load weights from `.safetensors` / `gguf` format
+- [x] Load weights from `.safetensors` format
+- [ ] Load weights from `gguf` format
 - [ ] BPE tokenizer (compatible with LLaMA tokenizer)
 - [ ] End-to-end text generation (greedy / top-p sampling)
 
@@ -50,4 +52,42 @@ cmake -DCMAKE_CUDA_COMPILER=/home/disk1/caorenjie/cuda-12.2/bin/nvcc \
       -DCMAKE_CUDA_ARCHITECTURES=native \
       ..
 
+make -j8
+```
+
+## Test
+
+```sh
+# 运行所有测试
+cd build
+ctest
+
+```
+
+## VSCode Extension
+```
+claude code
+C/C++
+CMake
+```
+
+## claude code api
+```
+vim ~/.claude/config.json
+{
+"primaryApiKey": "ca"
+}
+
+vim ~/.claude/settings.json
+{
+  "env": {
+    "ANTHROPIC_AUTH_TOKEN": "替换为您的API Key",
+    "ANTHROPIC_BASE_URL": "https://claudecode.top/claude-code",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1
+  },
+  "permissions": {
+    "allow": [],
+    "deny": []
+  }
+}
 ```

@@ -57,6 +57,29 @@ Tensor mul(const Tensor& a, const Tensor& b) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+//  Element-wise add kernel (for residual connections)
+// ─────────────────────────────────────────────────────────────────────────────
+__global__ void add_kernel(const float* __restrict__ a,
+                            const float* __restrict__ b,
+                            float*       __restrict__ out,
+                            int64_t n) {
+    int64_t i = (int64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) out[i] = a[i] + b[i];
+}
+
+Tensor add(const Tensor& a, const Tensor& b) {
+    assert(a.device() == Device::CUDA && b.device() == Device::CUDA);
+    assert(a.numel() == b.numel());
+    Tensor out(a.shape(), DType::Float32, Device::CUDA);
+    int64_t n = a.numel();
+    int threads = 256;
+    add_kernel<<<(int)((n + threads - 1) / threads), threads>>>(
+        a.data_ptr<float>(), b.data_ptr<float>(), out.data_ptr<float>(), n);
+    CUDA_CHECK(cudaGetLastError());
+    return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 //  GELU kernel (tanh approximation)
 //  f(x) = 0.5 * x * (1 + tanh(sqrt(2/π) * (x + 0.044715 * x^3)))
 // ─────────────────────────────────────────────────────────────────────────────

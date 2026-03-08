@@ -28,6 +28,9 @@ endif()
 # ── cuBLAS ────────────────────────────────────────────────────────────────────
 find_package(CUDAToolkit REQUIRED)
 
+# ── third-party: safetensors-cpp (header-only, implementation compiled here) ──
+set(SAFETENSORS_DIR ${CMAKE_SOURCE_DIR}/third_party/safetensors-cpp)
+
 # ── Source files ──────────────────────────────────────────────────────────────
 set(TENSOR_SRCS tensor/tensor.cu)
 set(OPS_SRCS
@@ -36,13 +39,19 @@ set(OPS_SRCS
     ops/ops_attention.cu
     ops/ops_activation.cu
 )
+set(LOADER_SRCS loader/loader.cc)
+set(MODEL_SRCS model/qwen3_model.cc)
 
 # ── Core library ──────────────────────────────────────────────────────────────
 add_library(tinyllama STATIC
     ${TENSOR_SRCS}
     ${OPS_SRCS}
+    ${LOADER_SRCS}
+    ${MODEL_SRCS}
 )
 target_include_directories(tinyllama PUBLIC include)
+target_include_directories(tinyllama PRIVATE ${SAFETENSORS_DIR})
+target_include_directories(tinyllama PRIVATE ${CMAKE_SOURCE_DIR}/third_party/nlohmann)
 target_link_libraries(tinyllama PUBLIC CUDA::cublas CUDA::cudart)
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
