@@ -80,13 +80,18 @@ Tensor scaled_dot_product_attention(const Tensor& Q, const Tensor& K,
                                      const Tensor& V,
                                      const Tensor* mask = nullptr);
 
-// Multi-Head Attention (MHA).
+// Multi-Head Attention (MHA) with GQA support.
 //   Projects Q/K/V, runs n_heads independent attention heads, projects out.
 // x           : [batch, seq_len, d_model]
-// w_q/k/v/o   : [d_model, d_model]   projection weights
+// w_q/k/v/o   : projection weights
+//               Q: [n_heads * head_dim, d_model]
+//               K/V: [n_kv_heads * head_dim, d_model]  (GQA)
+//               O: [d_model, n_heads * head_dim]
 // b_q/k/v/o   : [d_model]            projection biases (pass empty to skip)
-// n_heads     : number of attention heads
-// kv_cache_k/v: optional KV-cache tensors, updated in-place (GQA-ready)
+// n_heads     : number of query heads
+// n_kv_heads  : number of key/value heads (for GQA, typically n_heads / 2 or n_heads / 4)
+//               if n_kv_heads == 0, defaults to n_heads (standard MHA)
+// kv_cache_k/v: optional KV-cache tensors, updated in-place
 // pos_offset  : current decoding position (0 during prefill)
 Tensor mha(const Tensor& x,
            const Tensor& w_q, const Tensor& b_q,
@@ -94,6 +99,7 @@ Tensor mha(const Tensor& x,
            const Tensor& w_v, const Tensor& b_v,
            const Tensor& w_o, const Tensor& b_o,
            int64_t n_heads,
+           int64_t n_kv_heads = 0,
            Tensor* kv_cache_k = nullptr,
            Tensor* kv_cache_v = nullptr,
            int64_t pos_offset = 0);
@@ -105,6 +111,9 @@ Tensor silu(const Tensor& x);
 
 // Element-wise multiply (used in SwiGLU: silu(gate) * up)
 Tensor mul(const Tensor& a, const Tensor& b);
+
+// Element-wise add (used for residual connections)
+Tensor add(const Tensor& a, const Tensor& b);
 
 // GELU approximation
 Tensor gelu(const Tensor& x);

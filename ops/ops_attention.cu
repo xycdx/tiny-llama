@@ -75,6 +75,7 @@ __global__ void scale_kernel(float* x, int64_t n, float scale) {
 // ─────────────────────────────────────────────────────────────────────────────
 //  Transpose [batch, seq, n_heads, head_dim] ↔ [batch, n_heads, seq, head_dim]
 // ─────────────────────────────────────────────────────────────────────────────
+// todo：transpose性能
 __global__ void transpose_bsnh_bnsh(const float* __restrict__ src,
                                      float*       __restrict__ dst,
                                      int64_t batch, int64_t s,
@@ -135,9 +136,60 @@ static Tensor bnsh_to_bsnh(const Tensor& t, int64_t s) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+//  GQA: Repeat K/V heads to match Q heads
+//  Input:  [batch, n_kv_heads, seq, head_dim]
+//  Output: [batch, n_heads, seq, head_dim]
+//  Each KV head is repeated (n_heads / n_kv_heads) times
+// ─────────────────────────────────────────────────────────────────────────────
+__global__ void repeat_kv_kernel(const float* __restrict__ src,
+                                  float*       __restrict__ dst,
+                                  int64_t batch, int64_t seq,
+                                  int64_t n_kv_heads, int64_t n_heads,
+                                  int64_t head_dim) {
+    int64_t b = blockIdx.z;
+    int64_t h_out = blockIdx.y;  // output head index [0, n_heads)
+    int64_t s = blockIdx.x;
+    int64_t d = threadIdx.x;
+
+    if (d < head_dim) {
+        // Map output head to input KV head
+        int64_t n_rep = n_heads / n_kv_heads;
+        int64_t h_in = h_out / n_rep;  // input KV head index
+
+        // src: [b, h_in, s, d]
+        // dst: [b, h_out, s, d]
+        dst[((b * n_heads + h_out) * seq + s) * head_dim + d] =
+            src[((b * n_kv_heads + h_in) * seq + s) * head_dim + d];
+    }
+}
+
+static Tensor repeat_kv(const Tensor& kv, int64_t n_heads, int64_t seq) {
+    // kv: [batch, n_kv_heads, seq, head_dim]
+    int64_t batch = kv.dim(0);
+    int64_t n_kv_heads = kv.dim(1);
+    int64_t head_dim = kv.dim(3);
+
+    if (n_kv_heads == n_heads) {
+        return kv;  // No repeat needed
+    }
+
+    assert(n_heads % n_kv_heads == 0);
+    Tensor out({batch, n_heads, seq, head_dim}, DType::Float32, Device::CUDA);
+
+    dim3 grid((int)seq, (int)n_heads, (int)batch);
+    int threads = (int)min(head_dim, (int64_t)1024);
+    repeat_kv_kernel<<<grid, threads>>>(
+        kv.data_ptr<float>(), out.data_ptr<float>(),
+        batch, seq, n_kv_heads, n_heads, head_dim);
+    CUDA_CHECK(cudaGetLastError());
+    return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 //  KV-cache 写入 kernel
 //  dst[b, pos_offset : pos_offset+seq, :, :] = src[b, :, :, :]
 // ─────────────────────────────────────────────────────────────────────────────
+// todo：kvcache
 __global__ void kvcache_write_kernel(const float* __restrict__ src,
                                       float*       __restrict__ dst,
                                       int64_t batch, int64_t seq,
@@ -199,7 +251,7 @@ Tensor scaled_dot_product_attention(const Tensor& Q, const Tensor& K,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  mha — Multi-Head Attention
+//  mha — Multi-Head Attention with GQA support
 // ─────────────────────────────────────────────────────────────────────────────
 Tensor mha(const Tensor& x,
            const Tensor& w_q, const Tensor& b_q,
@@ -207,6 +259,7 @@ Tensor mha(const Tensor& x,
            const Tensor& w_v, const Tensor& b_v,
            const Tensor& w_o, const Tensor& b_o,
            int64_t n_heads,
+           int64_t n_kv_heads,
            Tensor* kv_cache_k,
            Tensor* kv_cache_v,
            int64_t pos_offset) {
@@ -214,18 +267,31 @@ Tensor mha(const Tensor& x,
     int64_t batch    = x.dim(0);
     int64_t seq_len  = x.dim(1);
     int64_t d_model  = x.dim(2);
-    assert(d_model % n_heads == 0);
-    int64_t head_dim = d_model / n_heads;
+
+    // Default: n_kv_heads = n_heads (standard MHA)
+    if (n_kv_heads == 0) {
+        n_kv_heads = n_heads;
+    }
+
+    // Infer head_dim from Q projection weight
+    int64_t q_dim = w_q.dim(0);  // [n_heads * head_dim, d_model]
+    assert(q_dim % n_heads == 0);
+    int64_t head_dim = q_dim / n_heads;
+
+    // Verify K/V dimensions for GQA
+    int64_t kv_dim = w_k.dim(0);  // [n_kv_heads * head_dim, d_model]
+    assert(kv_dim == n_kv_heads * head_dim);
+    assert(n_heads % n_kv_heads == 0);  // n_heads must be divisible by n_kv_heads
 
     // ── 1. 线性投影 ───────────────────────────────────────────────────────────
-    Tensor Q = linear(x, w_q, b_q);   // [batch, seq, d_model]
-    Tensor K = linear(x, w_k, b_k);
-    Tensor V = linear(x, w_v, b_v);
+    Tensor Q = linear(x, w_q, b_q);   // [batch, seq, n_heads * head_dim]
+    Tensor K = linear(x, w_k, b_k);   // [batch, seq, n_kv_heads * head_dim]
+    Tensor V = linear(x, w_v, b_v);   // [batch, seq, n_kv_heads * head_dim]
 
-    // ── 2. reshape → [batch, seq, n_heads, head_dim] ─────────────────────────
+    // ── 2. reshape → [batch, seq, n_heads/n_kv_heads, head_dim] ──────────────
     Q = Q.view({batch, seq_len, n_heads, head_dim});
-    K = K.view({batch, seq_len, n_heads, head_dim});
-    V = V.view({batch, seq_len, n_heads, head_dim});
+    K = K.view({batch, seq_len, n_kv_heads, head_dim});
+    V = V.view({batch, seq_len, n_kv_heads, head_dim});
 
     // ── 3. RoPE ───────────────────────────────────────────────────────────────
     rope_(Q, K, pos_offset);
@@ -235,20 +301,20 @@ Tensor mha(const Tensor& x,
     Tensor K_full, V_full;
     if (kv_cache_k && kv_cache_v) {
         int64_t max_seq = kv_cache_k->dim(1);
-        dim3 grd((int)n_heads, (int)seq_len, (int)batch);
+        dim3 grd((int)n_kv_heads, (int)seq_len, (int)batch);
         int  thr = (int)min(head_dim, (int64_t)1024);
         kvcache_write_kernel<<<grd, thr>>>(
             K.data_ptr<float>(), kv_cache_k->data_ptr<float>(),
-            batch, seq_len, n_heads, head_dim, max_seq, pos_offset);
+            batch, seq_len, n_kv_heads, head_dim, max_seq, pos_offset);
         CUDA_CHECK(cudaGetLastError());
         kvcache_write_kernel<<<grd, thr>>>(
             V.data_ptr<float>(), kv_cache_v->data_ptr<float>(),
-            batch, seq_len, n_heads, head_dim, max_seq, pos_offset);
+            batch, seq_len, n_kv_heads, head_dim, max_seq, pos_offset);
         CUDA_CHECK(cudaGetLastError());
 
         seq_k  = pos_offset + seq_len;
-        K_full = kv_cache_k->view({batch, seq_k, n_heads, head_dim});
-        V_full = kv_cache_v->view({batch, seq_k, n_heads, head_dim});
+        K_full = kv_cache_k->view({batch, seq_k, n_kv_heads, head_dim});
+        V_full = kv_cache_v->view({batch, seq_k, n_kv_heads, head_dim});
     } else {
         seq_k  = seq_len;
         K_full = K;
@@ -256,14 +322,22 @@ Tensor mha(const Tensor& x,
     }
 
     // ── 5. 转置 [batch,seq,n_heads,head_dim] → [batch,n_heads,seq,head_dim] ──
-    Tensor Qh = bsnh_to_bnsh(Q,      seq_len)
-                    .view({batch * n_heads, seq_len, head_dim});
-    Tensor Kh = bsnh_to_bnsh(K_full, seq_k)
-                    .view({batch * n_heads, seq_k,   head_dim});
-    Tensor Vh = bsnh_to_bnsh(V_full, seq_k)
-                    .view({batch * n_heads, seq_k,   head_dim});
+    Tensor Qh = bsnh_to_bnsh(Q, seq_len);  // [batch, n_heads, seq_len, head_dim]
+    Tensor Kh = bsnh_to_bnsh(K_full, seq_k);  // [batch, n_kv_heads, seq_k, head_dim]
+    Tensor Vh = bsnh_to_bnsh(V_full, seq_k);  // [batch, n_kv_heads, seq_k, head_dim]
 
-    // ── 6. Causal mask（prefill 阶段）────────────────────────────────────────
+    // ── 6. GQA: Repeat K/V heads to match Q heads ────────────────────────────
+    if (n_kv_heads != n_heads) {
+        Kh = repeat_kv(Kh, n_heads, seq_k);  // [batch, n_heads, seq_k, head_dim]
+        Vh = repeat_kv(Vh, n_heads, seq_k);  // [batch, n_heads, seq_k, head_dim]
+    }
+
+    // ── 7. Reshape for batched attention ─────────────────────────────────────
+    Qh = Qh.view({batch * n_heads, seq_len, head_dim});
+    Kh = Kh.view({batch * n_heads, seq_k,   head_dim});
+    Vh = Vh.view({batch * n_heads, seq_k,   head_dim});
+
+    // ── 8. Causal mask（prefill 阶段）────────────────────────────────────────
     Tensor causal;
     const Tensor* pmask = nullptr;
     if (seq_len > 1 && pos_offset == 0) {
@@ -271,16 +345,16 @@ Tensor mha(const Tensor& x,
         pmask  = &causal;
     }
 
-    // ── 7. SDPA ───────────────────────────────────────────────────────────────
+    // ── 9. SDPA ───────────────────────────────────────────────────────────────
     Tensor attn_out = scaled_dot_product_attention(Qh, Kh, Vh, pmask);
     // [batch*n_heads, seq_len, head_dim]
 
-    // ── 8. 拼合 heads ─────────────────────────────────────────────────────────
+    // ── 10. 拼合 heads ────────────────────────────────────────────────────────
     attn_out = attn_out.view({batch, n_heads, seq_len, head_dim});
     Tensor concat = bnsh_to_bsnh(attn_out, seq_len);   // [batch, seq, n_heads, head_dim]
-    Tensor out_flat = concat.view({batch, seq_len, d_model});
+    Tensor out_flat = concat.view({batch, seq_len, n_heads * head_dim});
 
-    // ── 9. 输出投影 ───────────────────────────────────────────────────────────
+    // ── 11. 输出投影 ──────────────────────────────────────────────────────────
     return linear(out_flat, w_o, b_o);
 }
 

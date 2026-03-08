@@ -1,0 +1,9 @@
+这是一个几乎完全vibe coding实现大模型推理框架，完全使用cpp实现。
+取名为tiny-llama，想做成类似llama.cpp和mini-sglang的一个东西，目标实现qwen3系列模型的高性能推理。
+这周完成了大部分大模型推理所需的op：slementvise相关，embedding，softmax，rms_norm，linear。
+模型加载使用第三方的safetensor代码，跑完了qwen3模型的加载，但是前向传播存在问题，还未修复。
+总体claude code可以完成90+%的任务，十分强大，但是很多细节方面的东西，比如kernel性能，还需要人工检验。
+
+下一周todo:
+1. 验证kernel性能与计算误差；
+2. 跑通前向传播

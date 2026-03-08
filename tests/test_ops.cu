@@ -96,8 +96,8 @@ static bool test_silu() {
 static bool test_rope() {
     // 构造 q, k [1, 1, 2, 4]（batch=1, seq=1, heads=2, head_dim=4）
     // 应用 RoPE 后检验 x0'^2 + x1'^2 == x0^2 + x1^2（旋转保模）
-    std::vector<float> data(16);
-    for (int i = 0; i < 16; ++i) data[i] = (float)(i + 1);
+    std::vector<float> data(8);
+    for (int i = 0; i < 8; ++i) data[i] = (float)(i + 1);
     Tensor q = make_cuda(data, {1, 1, 2, 4});
     Tensor k = make_cuda(data, {1, 1, 2, 4});
     std::vector<float> q_orig = data;
