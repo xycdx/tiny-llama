@@ -75,6 +75,7 @@ __global__ void scale_kernel(float* x, int64_t n, float scale) {
 // ─────────────────────────────────────────────────────────────────────────────
 //  Transpose [batch, seq, n_heads, head_dim] ↔ [batch, n_heads, seq, head_dim]
 // ─────────────────────────────────────────────────────────────────────────────
+// todo：transpose性能
 __global__ void transpose_bsnh_bnsh(const float* __restrict__ src,
                                      float*       __restrict__ dst,
                                      int64_t batch, int64_t s,
@@ -188,6 +189,7 @@ static Tensor repeat_kv(const Tensor& kv, int64_t n_heads, int64_t seq) {
 //  KV-cache 写入 kernel
 //  dst[b, pos_offset : pos_offset+seq, :, :] = src[b, :, :, :]
 // ─────────────────────────────────────────────────────────────────────────────
+// todo：kvcache
 __global__ void kvcache_write_kernel(const float* __restrict__ src,
                                       float*       __restrict__ dst,
                                       int64_t batch, int64_t seq,
