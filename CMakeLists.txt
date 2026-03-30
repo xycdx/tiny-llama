@@ -41,6 +41,7 @@ set(OPS_SRCS
 )
 set(LOADER_SRCS loader/loader.cc)
 set(MODEL_SRCS model/qwen3_model.cc)
+set(TOKENIZER_SRCS src/tokenizer.cc)
 
 # ── Core library ──────────────────────────────────────────────────────────────
 add_library(tinyllama STATIC
@@ -48,6 +49,7 @@ add_library(tinyllama STATIC
     ${OPS_SRCS}
     ${LOADER_SRCS}
     ${MODEL_SRCS}
+    ${TOKENIZER_SRCS}
 )
 target_include_directories(tinyllama PUBLIC include)
 target_include_directories(tinyllama PRIVATE ${SAFETENSORS_DIR})
@@ -63,4 +65,15 @@ endif()
 # ── Examples ──────────────────────────────────────────────────────────────────
 if(EXISTS ${CMAKE_SOURCE_DIR}/examples/CMakeLists.txt)
     add_subdirectory(examples)
+endif()
+
+# ── Server ────────────────────────────────────────────────────────────────────
+add_executable(server src/server.cc)
+target_link_libraries(server PRIVATE tinyllama)
+target_include_directories(server PRIVATE
+    ${CMAKE_SOURCE_DIR}/third_party/cpp-httplib
+    ${CMAKE_SOURCE_DIR}/third_party/nlohmann
+)
+if(UNIX)
+    target_link_libraries(server PRIVATE pthread)
 endif()

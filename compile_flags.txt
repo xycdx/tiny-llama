@@ -1,2 +1,5 @@
 -std=c++17
 -I./include
+-I./third_party/cpp-httplib
+-I./third_party/nlohmann
+-I./third_party/safetensors-cpp
